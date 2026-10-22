@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Theme } from '../App';
 
 const themes: Theme[] = [
@@ -136,9 +136,64 @@ interface ThemeOrbProps {
   onThemeChange: (theme: Theme) => void;
   onAreaThemeChange: (area: string, color: string) => void;
   currentTheme: Theme;
+  onClose?: () => void;
 }
 
-const ThemeOrb: React.FC<ThemeOrbProps> = ({ onThemeChange, currentTheme }) => {
+// Distancia (px) que hay que arrastrar a la derecha para cerrar el orbe
+const CLOSE_THRESHOLD = 70;
+// Desvío vertical máximo permitido para que cuente como gesto horizontal
+const MAX_VERTICAL_DRIFT = 80;
+
+const DESKTOP_QUERY = '(hover: hover) and (pointer: fine)';
+
+const ThemeOrb: React.FC<ThemeOrbProps> = ({ onThemeChange, currentTheme, onClose }) => {
+  // Táctil vs escritorio (cambia los textos de ayuda)
+  const [isTouch, setIsTouch] = useState<boolean>(
+    () => typeof window !== 'undefined' && !window.matchMedia(DESKTOP_QUERY).matches
+  );
+  React.useEffect(() => {
+    const mq = window.matchMedia(DESKTOP_QUERY);
+    const update = () => setIsTouch(!mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
+
+  // Gesto: arrastrar desde el centro hacia la derecha para cerrar (Pointer Events: dedo y mouse)
+  const [dragX, setDragX] = useState(0);
+  const [swiping, setSwiping] = useState(false);
+  const swipeStart = useRef<{ x: number; y: number; id: number } | null>(null);
+
+  const handleSwipeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    swipeStart.current = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    setSwiping(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleSwipeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const s = swipeStart.current;
+    if (!s || s.id !== e.pointerId) return;
+    const dx = e.clientX - s.x;
+    const dy = Math.abs(e.clientY - s.y);
+    setDragX(dy > MAX_VERTICAL_DRIFT ? 0 : Math.max(0, dx));
+  };
+
+  const handleSwipeEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const s = swipeStart.current;
+    if (!s || s.id !== e.pointerId) return;
+    swipeStart.current = null;
+    setSwiping(false);
+    setDragX(0);
+
+    const dx = e.clientX - s.x;
+    const dy = Math.abs(e.clientY - s.y);
+    if (e.type === 'pointerup' && dx > CLOSE_THRESHOLD && dy < MAX_VERTICAL_DRIFT) {
+      if (navigator.vibrate) navigator.vibrate(30);
+      onClose?.();
+    }
+  };
+
   const [isDragging, setIsDragging] = useState(false);
   const [, setDraggedTheme] = useState<Theme | null>(null);
   const [rightClickDragMode, setRightClickDragMode] = useState(false);
@@ -281,7 +336,14 @@ const ThemeOrb: React.FC<ThemeOrbProps> = ({ onThemeChange, currentTheme }) => {
   };
 
   return (
-    <div className="fixed top-8 right-8 z-50">
+    <div
+      className="fixed top-2 right-2 sm:top-8 sm:right-8 z-50"
+      style={{
+        transform: `translateX(${dragX}px)`,
+        opacity: 1 - Math.min(dragX / 200, 0.6),
+        transition: swiping ? 'none' : 'transform 200ms ease, opacity 200ms ease',
+      }}
+    >
       <div
         className="relative w-40 h-40 cursor-pointer select-none"
         style={{
@@ -331,6 +393,7 @@ const ThemeOrb: React.FC<ThemeOrbProps> = ({ onThemeChange, currentTheme }) => {
           }`}
           style={{
             transform: 'translate(-50%, -50%)',
+            touchAction: isTouch ? 'none' : 'auto', // en celular evita que el navegador robe el gesto horizontal
             backgroundColor: currentTheme.sectionColor,
             boxShadow: isDragging
               ? `inset 0 4px 12px rgba(0, 0, 0, 0.4), 0 0 40px ${currentTheme.sectionColor}80`
@@ -338,6 +401,12 @@ const ThemeOrb: React.FC<ThemeOrbProps> = ({ onThemeChange, currentTheme }) => {
           }}
           onDrop={handleOrbDrop}
           onDragOver={handleOrbDragOver}
+          // El gesto de cierre solo existe en celular (en PC el orbe no tapa el botón "Orbe")
+          onPointerDown={isTouch ? handleSwipeStart : undefined}
+          onPointerMove={isTouch ? handleSwipeMove : undefined}
+          onPointerUp={isTouch ? handleSwipeEnd : undefined}
+          onPointerCancel={isTouch ? handleSwipeEnd : undefined}
+          title={isTouch ? 'Arrastra hacia la derecha para cerrar' : undefined}
         >
           <div className="absolute inset-3 rounded-full bg-gradient-to-br from-white/30 to-transparent" />
           {isDragging && (
@@ -347,13 +416,23 @@ const ThemeOrb: React.FC<ThemeOrbProps> = ({ onThemeChange, currentTheme }) => {
 
         {/* Efectos de brillo */}
         <div className="absolute inset-4 rounded-full bg-gradient-to-br from-white/20 via-transparent to-transparent pointer-events-none" />
-        <div className="absolute inset-0 rounded-full border border-white/10" />
+        <div className="absolute inset-0 rounded-full border border-white/10 pointer-events-none" />
       </div>
 
       {/* Instrucciones */}
-      <div className="absolute -bottom-16 left-1/2 transform -translate-x-1/2 text-xs text-gray-400 text-center whitespace-nowrap">
-        <div>Click derecho: agarrar</div>
-        <div className="text-xs opacity-75 mt-1">Click izquierdo: soltar</div>
+      <div className="absolute -bottom-20 left-1/2 transform -translate-x-1/2 text-[11px] sm:text-xs text-gray-400 text-center whitespace-nowrap pointer-events-none">
+        {isTouch ? (
+          <>
+            <div>Mantén pulsado: agarrar</div>
+            <div className="opacity-75 mt-1">Toca: soltar</div>
+            <div className="opacity-75 mt-1">Centro → arrastra: cerrar</div>
+          </>
+        ) : (
+          <>
+            <div>Click derecho: agarrar</div>
+            <div className="opacity-75 mt-1">Click izquierdo: soltar</div>
+          </>
+        )}
       </div>
     </div>
   );

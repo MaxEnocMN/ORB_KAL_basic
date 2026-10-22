@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Theme } from '../App';
 
 interface CalculatorProps {
@@ -64,24 +64,43 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
   const [showShortcuts, setShowShortcuts] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('full');
 
-  // Adaptación automática en casos extremos de ventana pequeña
+  // Táctil vs escritorio: decide qué ayuda se muestra y si hay efectos hover
+  const [isTouch, setIsTouch] = useState<boolean>(
+    () => typeof window !== 'undefined' && !window.matchMedia('(hover: hover) and (pointer: fine)').matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const update = () => setIsTouch(!mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
+
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (isTouch && showShortcuts) {
+      panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [isTouch, showShortcuts]);
+
+  // Adaptación automática: solo actúa cuando se CRUZA un umbral, así no pisa lo que el
+  // usuario eligió (en celular el resize se dispara al ocultarse la barra del navegador)
+  const autoMode = useRef<{ shortcuts: boolean | null; view: ViewMode | null }>({ shortcuts: null, view: null });
   useEffect(() => {
     const handleResize = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
 
-      if (w < 680) {
-        setShowShortcuts(false);
-      } else {
-        setShowShortcuts(true);
-      }
+      const nextShortcuts = w >= 680;
+      const nextView: ViewMode = h < 220 ? 'display' : h < 520 ? 'functions' : 'full';
 
-      if (h < 220) {
-        setViewMode('display');
-      } else if (h < 520) {
-        setViewMode('functions');
-      } else {
-        setViewMode('full');
+      if (autoMode.current.shortcuts !== nextShortcuts) {
+        autoMode.current.shortcuts = nextShortcuts;
+        setShowShortcuts(nextShortcuts);
+      }
+      if (autoMode.current.view !== nextView) {
+        autoMode.current.view = nextView;
+        setViewMode(nextView);
       }
     };
 
@@ -276,16 +295,29 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
     `
   });
 
-  const btnClasses = "p-4 rounded-xl font-bold text-lg transition-all duration-200 hover:scale-105 active:scale-95";
-  const compactBtnClasses = "p-3 rounded-xl font-bold text-base transition-all duration-200 hover:scale-105 active:scale-95";
+  const hov = (cls: string) => (isTouch ? '' : cls); // hover solo en escritorio
+  const btnClasses = `py-3 sm:py-4 min-h-[44px] rounded-xl font-bold text-lg transition-all duration-200 touch-manipulation ${hov('hover:scale-105')} active:scale-95`;
+  const compactBtnClasses = `py-2 sm:py-3 min-h-[44px] rounded-xl font-bold text-base transition-all duration-200 touch-manipulation ${hov('hover:scale-105')} active:scale-95`;
+
+  // En vistas compactas la ayuda siempre va ABAJO de la calculadora
+  const mode: ViewMode = isTouch ? 'full' : viewMode; // en celular solo la vista completa (con números)
+  const stacked = mode !== 'full';
+  const panelLayout = stacked
+    ? 'order-2 w-[min(96vw,420px)]'
+    : 'order-2 md:order-1 w-[min(96vw,420px)] md:w-auto';
+  const calcLayout = stacked ? 'order-1' : 'order-1 md:order-2';
+  const barBtn = isTouch
+    ? 'px-3 min-h-[44px] min-w-[44px] text-xs rounded'
+    : 'px-2 py-0.5 rounded';
 
   return (
-    <div className="flex flex-col md:flex-row items-center justify-center p-2 bg-transparent select-none gap-4">
+    <div className={`m-auto flex flex-col ${stacked ? '' : 'md:flex-row'} items-center justify-center p-1 sm:p-2 bg-transparent select-none gap-3`}>
       
       {/* Panel de atajos */}
       {showShortcuts && (
         <div 
-          className={`p-4 rounded-xl backdrop-blur-sm transition-all duration-300 ${
+          ref={panelRef}
+          className={`${panelLayout} p-4 rounded-xl backdrop-blur-sm transition-all duration-300 ${
             dragOver === 'shortcuts' ? 'ring-4 ring-blue-400 scale-105' : ''
           }`}
           style={{ 
@@ -305,9 +337,24 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
             className="font-bold mb-3 text-sm"
             style={{ color: getContrastColor(theme.shortcuts ?? '#374151') }}
           >
-            Atajos de Teclado:
+            {isTouch ? 'Ayuda táctil:' : 'Atajos de Teclado:'}
           </h3>
-          <div 
+          {isTouch ? (
+            <div
+              className="text-xs space-y-1"
+              style={{ color: getContrastColor(theme.shortcuts ?? '#374151') }}
+            >
+              <div>• Toca los botones para calcular</div>
+              <div>• C: limpiar todo</div>
+              <div className="pt-2 font-semibold opacity-90 border-t border-white/20 mt-2">
+                • Orbe: mantén pulsado un color para agarrarlo y toca para soltarlo
+              </div>
+              <div className="font-semibold opacity-90">
+                • Arrastra el centro del orbe a la derecha para cerrarlo
+              </div>
+            </div>
+          ) : (
+            <div 
             className="text-xs space-y-1"
             style={{ color: getContrastColor(theme.shortcuts ?? '#374151') }}
           >
@@ -325,12 +372,13 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
               • Ctrl + B: Cambiar Modo Vista
             </div>
           </div>
+          )}
         </div>
       )}
 
       {/* Calculadora */}
       <div 
-        className={`relative w-80 p-5 rounded-3xl backdrop-blur-sm transition-all duration-300 ${
+        className={`${calcLayout} relative w-[min(96vw,420px)] p-3 sm:p-5 rounded-3xl backdrop-blur-sm transition-all duration-300 ${
           dragOver === 'calculatorBody' ? 'ring-4 ring-blue-400 scale-105' : ''
         }`}
         style={{ 
@@ -348,27 +396,29 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
       >
         {/* Barra superior de control de vistas con desenfoque automático al hacer clic */}
         <div 
-          className="flex items-center justify-between mb-3 px-1 text-[11px] opacity-75"
+          className={`flex items-center justify-between mb-3 px-1 ${isTouch ? 'text-xs' : 'text-[11px]'} opacity-75`}
           style={{ color: getContrastColor(theme.calculatorBody ?? '#374151') }}
         >
           <div className="flex gap-2">
+            {!isTouch && (
             <button
               onClick={(e) => {
                 e.currentTarget.blur();
                 cycleViewMode();
               }}
               title="Cambiar vista (Ctrl + B)"
-              className="px-2 py-0.5 rounded bg-black/20 hover:bg-black/40 transition"
+              className={`${barBtn} bg-black/20 ${hov('hover:bg-black/40')} transition`}
             >
-              {viewMode === 'full' ? 'Completa' : viewMode === 'functions' ? 'Funciones' : 'Solo Display'}
+              {mode === 'full' ? 'Completa' : mode === 'functions' ? 'Funciones' : 'Solo Display'}
             </button>
+            )}
             <button
               onClick={(e) => {
                 e.currentTarget.blur();
                 setShowShortcuts(prev => !prev);
               }}
               title="Mostrar/Ocultar Atajos (Ctrl + H)"
-              className={`px-2 py-0.5 rounded transition ${showShortcuts ? 'bg-white/25 font-bold' : 'bg-black/20 hover:bg-black/40'}`}
+              className={`${barBtn} transition ${showShortcuts ? 'bg-white/25 font-bold' : `bg-black/20 ${hov('hover:bg-black/40')}`}`}
             >
               ?
             </button>
@@ -379,7 +429,7 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
               onToggleOrb();
             }}
             title="Mostrar/Ocultar Orbe de Color (Ctrl + M)"
-            className={`px-2 py-0.5 rounded transition ${showOrb ? 'bg-white/25 font-bold' : 'bg-black/20 hover:bg-black/40'}`}
+            className={`${barBtn} transition ${showOrb ? 'bg-white/25 font-bold' : `bg-black/20 ${hov('hover:bg-black/40')}`}`}
           >
             🎨 Orbe
           </button>
@@ -387,7 +437,7 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
 
         {/* Pantalla */}
         <div 
-          className={`${viewMode === 'display' ? 'mb-0' : 'mb-4'} p-4 rounded-2xl overflow-hidden transition-all duration-300 ${
+          className={`${mode === 'display' ? 'mb-0' : 'mb-4'} p-4 rounded-2xl overflow-hidden transition-all duration-300 ${
             dragOver === 'display' ? 'ring-4 ring-blue-400 scale-105' : ''
           }`}
           style={{ 
@@ -429,7 +479,7 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
         >
           <div className="flex justify-between items-baseline">
             <span 
-              className="text-xs font-mono opacity-60"
+              className="text-sm font-mono opacity-80"
               style={{ color: getContrastColor(theme.display ?? '#111827') }}
             >
               {operation ? `${previousValue ?? ''} ${operation}` : ''}
@@ -444,7 +494,7 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
         </div>
 
         {/* MODO SOLO FUNCIONES: Oculta teclado numérico 0-9 */}
-        {viewMode === 'functions' && (
+        {mode === 'functions' && (
           <div 
             className={`grid grid-cols-6 gap-2 transition-all duration-300 ${
               dragOver === 'buttons' ? 'ring-4 ring-blue-400 scale-105' : ''
@@ -488,7 +538,7 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
         )}
 
         {/* MODO COMPLETO: Todos los botones */}
-        {viewMode === 'full' && (
+        {mode === 'full' && (
           <div 
             className={`grid grid-cols-4 gap-3 transition-all duration-300 ${
               dragOver === 'buttons' ? 'ring-4 ring-blue-400 scale-105' : ''
@@ -552,7 +602,7 @@ export default function Calculator({ theme, onThemeChange, showOrb, onToggleOrb 
         )}
 
         {/* Etiqueta en la base */}
-        {viewMode === 'full' && (
+        {mode === 'full' && (
           <div className="mt-4 text-center">
             <span 
               className="text-xs opacity-60"

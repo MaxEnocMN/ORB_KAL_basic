@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ThemeOrb from './components/ThemeOrb';
 import Calculator from './components/Calculator';
 
@@ -39,14 +39,17 @@ const defaultTheme: Theme = {
 function App() {
   const [currentTheme, setCurrentTheme] = useState<Theme>(defaultTheme);
   const [showOrb, setShowOrb] = useState<boolean>(true);
+  // Recuerda si la pantalla ya era "pequeña" para no pisar la elección del usuario en cada resize
+  const wasSmallRef = useRef<boolean | null>(null);
 
   // Detectar tamaño inicial y escuchar Ctrl + M para mostrar/ocultar el Orbe
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth < 768 || window.innerHeight < 560) {
-        setShowOrb(false);
-      } else {
-        setShowOrb(true);
+      const small = window.innerWidth < 768 || window.innerHeight < 560;
+      // Solo reacciona al CRUZAR el umbral (en celular el resize se dispara al ocultar la barra del navegador)
+      if (wasSmallRef.current !== small) {
+        wasSmallRef.current = small;
+        setShowOrb(!small);
       }
     };
 
@@ -98,13 +101,14 @@ function App() {
   };
 
   return (
-    <div className={`fixed inset-0 h-[100dvh] w-screen bg-gradient-to-br ${currentTheme.colors.background} transition-all duration-700 ease-in-out overflow-hidden flex items-center justify-center p-2 sm:p-4 box-border`}>
+    <div className={`fixed inset-0 h-[100dvh] w-screen bg-gradient-to-br ${currentTheme.colors.background} transition-all duration-700 ease-in-out overflow-hidden flex items-center justify-center p-1 sm:p-4 box-border`}>
       
       {/* Orbe de temas (se muestra/oculta con Ctrl + M) */}
       {showOrb && (
         <ThemeOrb 
           onThemeChange={handleThemeChange} 
           onAreaThemeChange={handleAreaThemeChange}
+          onClose={() => setShowOrb(false)}
           currentTheme={currentTheme} 
         />
       )}
@@ -116,7 +120,7 @@ function App() {
       </div>
 
       {/* Contenedor central */}
-      <div className="relative z-10 w-full h-full flex items-center justify-center">
+      <div className="relative z-10 w-full h-full flex overflow-auto">
         <Calculator 
           theme={currentTheme} 
           onThemeChange={handleAreaThemeChange}
